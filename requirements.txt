@@ -1,0 +1,8 @@
+# ui-sandbox dependencies
+# required
+pywin32>=306
+Pillow>=9.0
+
+# optional (recommended)
+pywinauto>=0.6.8   # UIA mode: auto_id clicks, control tree dump, set_value
+pyvda>=0.4         # vd mode: virtual desktop isolation (Win10+)
