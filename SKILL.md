@@ -51,6 +51,15 @@ python sb.py doctor                                    # 环境自检
 # 1. 启动被测程序（-- 之后是程序命令行；选项必须放在 -- 之前）
 python sb.py start demo --title "记事本|Notepad" -- C:\Windows\notepad.exe
 python sb.py start qt   --title "MyApp" --mode ghost  -- D:\build\MyApp.exe
+python sb.py start hid  --title "MyApp" --park 500,-3000 -- D:\build\MyApp.exe  # 停到主屏正上方离屏处（见下）
+
+# -可-自定义 ghost 停靠点 --park x,y ——
+# 默认停靠在虚拟屏左上角+8px：副屏在主屏左边时正好落在左副屏角落，owned 弹窗居中在
+# 父窗口上，收拢前会在那里闪现。不想在副屏看到动静就停到屏外，如 --park 500,-3000。
+# 停靠点随会话持久化到 session.json，后续任何 sb.py 子命令（含 sweep/看门狗收拢的弹窗）
+# 都停同一位置。实测（2026-09-18，Win11+DWM）notepad(GDI)/Qt6 完全离屏仍持续重绘、
+# PrintWindow 截图保持实时；仅“被遮挡即暂停渲染”的程序（Chromium/Electron、独占 GPU）
+# 可能冻结截图——这类程序用默认停靠点。库流：SandboxSession(..., a_Park=(500, -3000))。
 
 # 2. 观察
 python sb.py windows demo --children     # 顶层窗口 + 子控件（hwnd/类名/ID/文本）
@@ -92,7 +101,7 @@ python sb.py status          # 会话列表（自动清理死会话）
 ```python
 import sandbox as sb
 
-s = sb.SandboxSession(name="mytest", mode="ghost")
+s = sb.SandboxSession(name="mytest", mode="ghost")          # 或 a_Park=(500,-3000) 自定义停靠点
 hwnd = s.start(r"D:\build\MyApp.exe", title_re="MyApp")   # 默认已开启弹窗自动收拢
 edit = s.find_child(cls="Edit")
 sb.wm_settext(edit, "hello")          # 或 s.find_child + msg_type/msg_keys/msg_click

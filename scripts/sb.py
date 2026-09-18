@@ -61,7 +61,19 @@ def cmd_doctor(a):
 
 
 def cmd_start(a):
-    s = sb.SandboxSession(name=a.name, mode=a.mode)
+    sPark = None
+    if getattr(a, "park", None):
+        parts = a.park.replace(" ", "").split(",")
+        if len(parts) != 2:
+            print("ERROR: --park expects 'x,y' (e.g. --park 500,-3000)",
+                  file=sys.stderr)
+            sys.exit(2)
+        try:
+            sPark = (int(parts[0]), int(parts[1]))
+        except ValueError:
+            print("ERROR: --park expects integer 'x,y'", file=sys.stderr)
+            sys.exit(2)
+    s = sb.SandboxSession(name=a.name, mode=a.mode, a_Park=sPark)
     hwnd = s.start(a.app[0], args=" ".join(a.app[1:]) if len(a.app) > 1 else "",
                    title_re=a.title, timeout=a.timeout,
                    env_isolate=not a.no_env_isolate, cwd=a.cwd)
@@ -70,6 +82,7 @@ def cmd_start(a):
     print(f"  title : {s.title}")
     print(f"  rect  : {rect}")
     print(f"  mode  : {s.mode}  isolated={not sb.visible_to_user(hwnd)}")
+    print(f"  park  : {tuple(s._park) if s._park else '(default: virtual screen top-left + 8px)'}")
     print(f"  dir   : {s.root}")
     print("  note  : 弹窗看门狗随本命令退出即停止; CLI 流请挂 'sweep <name> --watch'"
           " 驻留收拢, 或改用库流(s.start 默认全程看门狗)")
@@ -304,6 +317,11 @@ def main():
                         choices=["ghost", "offscreen", "vd"])
         sp.add_argument("--timeout", type=float, default=20)
         sp.add_argument("--cwd")
+        sp.add_argument("--park",
+                        help="ghost 停靠点 'x,y'（屏幕坐标），如 --park 500,-3000 "
+                             "停到主屏正上方离屏处；默认虚拟屏左上+8px。"
+                             "实测 notepad/Qt 离屏仍可实时截图；"
+                             "Electron/独占GPU 程序可能冻结，用默认值")
         sp.add_argument("--no-env-isolate", action="store_true",
                         help="keep real APPDATA/TEMP (some apps need real env)")
         try:
