@@ -348,7 +348,8 @@ def move_offscreen(hwnd: int, margin: int = 100) -> tuple:
     return get_window_rect(hwnd)
 
 
-def ghostify(hwnd: int) -> None:
+def ghostify(hwnd: int, a_iX: int | None = None,
+             a_iY: int | None = None) -> None:
     """GHOST MODE -- the core isolation primitive.
 
     Keeps the window ON a real monitor (so it keeps receiving WM_PAINT and the
@@ -361,7 +362,16 @@ def ghostify(hwnd: int) -> None:
       - absent from taskbar    : ITaskbarList::DeleteTab
       - absent from Alt-Tab    : WS_EX_TOOLWINDOW
     The window never takes focus, never blocks the real cursor, and its
-    z-order stays at the bottom."""
+    z-order stays at the bottom.
+
+    a_iX/a_iY override the parking spot. Default = virtual screen top-left
+    + 8px (on setups where the secondary monitor sits left of the primary
+    that lands on the LEFT monitor's corner and the user may see popup
+    flashes there; park offscreen, e.g. 500,-3000, to keep the corner
+    quiet). Measured 2026-09-18: notepad(GDI) and Qt6 stay repainting even
+    fully offscreen, so PrintWindow captures keep working; only renderers
+    that pause when occluded (Chromium/Electron, exclusive-GPU apps) may
+    freeze -- keep the default park for those."""
     ex = user32.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
     user32.SetWindowLongW(
         ctypes.c_void_p(hwnd), GWL_EXSTYLE,
@@ -369,8 +379,10 @@ def ghostify(hwnd: int) -> None:
         | WS_EX_NOACTIVATE)
     user32.SetLayeredWindowAttributes(ctypes.c_void_p(hwnd), 0, 1, LWA_ALPHA)
     vs_l, vs_t, vs_r, vs_b = virtual_screen_rect()
+    x = vs_l + 8 if a_iX is None else a_iX
+    y = vs_t + 8 if a_iY is None else a_iY
     user32.SetWindowPos(ctypes.c_void_p(hwnd), 1,  # HWND_BOTTOM
-                        vs_l + 8, vs_t + 8, 0, 0,
+                        x, y, 0, 0,
                         SWP_NOSIZE | SWP_NOACTIVATE)
     remove_from_taskbar(hwnd)
 
@@ -640,9 +652,11 @@ def _vk_for(token: str) -> int:
     if t in _VK and _VK[t] is not None:
         return _VK[t]
     if len(token) == 1:
-        vk = user32.VkKeyExW(ord(token), user32.GetKeyboardLayout(0))
-        if vk != 0xFF and vk != 0xFFFFFFFF:
-            return vk & 0xFF
+        # VkKeyScanExW (NOT VkKeyExW -- no such export): low byte = VK code,
+        # high byte = shift state; -1 (all ones) means unmappable char.
+        iVk = user32.VkKeyScanExW(ord(token), user32.GetKeyboardLayout(0))
+        if iVk != -1 and (iVk & 0xFFFF) != 0xFFFF:
+            return iVk & 0xFF
         raise SandboxError(f"cannot map key {token!r} to a VK code "
                            f"(layout-dependent char?)")
     raise SandboxError(f"unknown key name: {token!r}")
@@ -898,9 +912,13 @@ class SandboxSession:
                       frozen-capture caveat as offscreen
     """
 
-    def __init__(self, name: str = "default", mode: str = "ghost"):
+    def __init__(self, name: str = "default", mode: str = "ghost",
+                 a_Park: tuple | None = None):
         self.name = name
         self.mode = mode
+        # ghost 停靠点（屏幕坐标 x,y）。None = 默认虚拟屏左上+8px。
+        # 跨命令/跨进程持久化到 session.json，sweep 与看门狗共用。
+        self._park = tuple(a_Park) if a_Park else None
         self.root = os.path.join(sandbox_root(), "sessions", name)
         self.data_dir = os.path.join(self.root, "data")
         self.shot_dir = os.path.join(self.root, "shots")
@@ -1032,7 +1050,10 @@ class SandboxSession:
             self._vd_number = info["number"]
             self._vd_created = info["created"]
         else:  # ghost (default)
-            ghostify(hwnd)
+            if self._park:
+                ghostify(hwnd, self._park[0], self._park[1])
+            else:
+                ghostify(hwnd)
         if fg_was_aut:
             self._restore_user_focus()
         sb_log("isolate", session=self.name, hwnd=f"0x{hwnd:X}",
@@ -1218,6 +1239,7 @@ class SandboxSession:
     def _save(self):
         st = {"name": self.name, "pid": self.pid, "hwnd": self.hwnd,
               "title": self.title, "mode": self.mode, "exe": self.exe,
+              "park": list(self._park) if self._park else None,
               "started": time.strftime("%Y-%m-%d %H:%M:%S"),
               "root": self.root,
               "user_fg": self._user_fg,  # focus-restore target: survives the
@@ -1241,6 +1263,7 @@ class SandboxSession:
         s._user_fg = st.get("user_fg", 0) or 0
         s._vd_number = st.get("vd_number")
         s._vd_created = st.get("vd_created", False)
+        s._park = tuple(st["park"]) if st.get("park") else None
         if not is_window(s.hwnd):
             # main hwnd died; try to re-resolve from pid
             for hwnd, pid, cls, title, visible in enum_windows():
