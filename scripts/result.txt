@@ -1,0 +1,3 @@
+RESULT=1
+NAME=测试子题A
+IMG=

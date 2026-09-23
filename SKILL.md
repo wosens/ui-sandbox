@@ -96,6 +96,10 @@ python sb.py status          # 会话列表（自动清理死会话）
 2. **立即归还**：`isolate()` 发现被隔离的窗口正占着前台（启动窗口、刚弹出的对话框）时，隔离后立即把前台还给用户之前的窗口（`AttachThreadInput` + `SetForegroundWindow`，跨进程可用）。
 3. **毫秒级纠正**：看门狗挂 `EVENT_SYSTEM_FOREGROUND` 钩子——AUT 代码自己调 `SetForegroundWindow` 抢焦点（`WS_EX_NOACTIVATE` 挡不住显式调用）时，毫秒级自动归还；`sweep()` 每 tick 亦作兜底。归还目标动态跟随用户当前前台（用户切到别的窗口后，归还/跟踪目标随之更新，绝不把用户硬拉回旧窗口）。
 
+## 会话防泄漏（start 自动收割）
+
+`start` 自带**同名残留会话收割**：state 文件存在且 pid 活着 → 按 pid 强杀旧进程树（绝不禁按镜像名全杀——用户可能开着同一程序）并清 state，再启动新会话。杜绝「start 覆盖未 stop 会话导致宿主进程泄漏」（实测事故：ac19/mplat 会话二启覆盖，旧宿主进程遗留）。日志事件：`reaped_stale`。
+
 ## Python 库 / pytest 用法
 
 ```python

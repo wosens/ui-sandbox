@@ -950,6 +950,9 @@ class SandboxSession:
         import shlex
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.shot_dir, exist_ok=True)
+        # 收割同名残留会话：防 start 覆盖未 stop 的旧会话造成宿主进程泄漏
+        # （实测事故：ac19/mplat 会话二次 start 覆盖，旧宿主进程遗留到重启）
+        self._reap_stale_session()
         # remember where the user was BEFORE launching the AUT, so the focus
         # stolen by the AUT's startup window can be given right back
         self._user_fg = get_foreground_window()
@@ -1031,6 +1034,32 @@ class SandboxSession:
             return best
         raise SandboxError(f"no main window for pid={self.pid} within "
                            f"{timeout}s (try --title regex)")
+
+    def _reap_stale_session(self):
+        """Kill-and-clear a leftover session of the same name before start().
+
+        When state_file exists and its pid is still alive, force-kill that pid
+        tree (BY PID -- never by image name, the user may run the same exe)
+        and remove the state file. Returns the reaped pid or None."""
+        if not os.path.exists(self.state_file):
+            return None
+        try:
+            with open(self.state_file, encoding="utf-8") as f:
+                iStalePid = json.load(f).get("pid")
+        except Exception:
+            iStalePid = None
+        if iStalePid and pid_alive(iStalePid):
+            try:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(iStalePid)],
+                               capture_output=True, timeout=15)
+                sb_log("reaped_stale", session=self.name, pid=iStalePid)
+            except Exception:
+                pass  # best-effort; Popen below will still replace state
+        try:
+            os.remove(self.state_file)
+        except OSError:
+            pass
+        return iStalePid
 
     def isolate(self, hwnd: int) -> None:
         """Apply the isolation primitives to a window.
